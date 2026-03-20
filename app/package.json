@@ -1,0 +1,15 @@
+{
+  "name": "devops-demo",
+  "version": "1.0.0",
+  "description": "Portfolio+ DevOps Technical Assessment - Node identifier web app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ejs": "^3.1.10",
+    "pg": "^8.13.0"
+  }
+}

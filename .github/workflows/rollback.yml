@@ -1,0 +1,91 @@
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Task definition revision to rollback to (leave empty for previous)'
+        required: false
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: devops-demo
+  ECS_CLUSTER: devops-demo-cluster
+  ECS_SERVICE: devops-demo-service
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  rollback:
+    name: Rollback ECS Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get current task definition revision
+        id: current
+        run: |
+          CURRENT_ARN=$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+          CURRENT_REV=$(echo "${CURRENT_ARN}" | grep -oE '[0-9]+$')
+          echo "revision=${CURRENT_REV}" >> "$GITHUB_OUTPUT"
+          echo "Current revision: ${CURRENT_REV}"
+
+      - name: Determine target revision
+        id: target
+        run: |
+          if [ -n "${{ github.event.inputs.revision }}" ]; then
+            TARGET="${{ github.event.inputs.revision }}"
+          else
+            TARGET=$(( ${{ steps.current.outputs.revision }} - 1 ))
+          fi
+
+          if [ "${TARGET}" -lt 1 ]; then
+            echo "::error::No previous revision to rollback to"
+            exit 1
+          fi
+
+          # Verify target revision exists
+          aws ecs describe-task-definition \
+            --task-definition "${PROJECT_NAME}:${TARGET}" > /dev/null 2>&1 || {
+              echo "::error::Task definition revision ${TARGET} does not exist"
+              exit 1
+            }
+
+          VERSION=$(aws ecs describe-task-definition \
+            --task-definition "${PROJECT_NAME}:${TARGET}" \
+            --query 'taskDefinition.containerDefinitions[0].environment[?name==`APP_VERSION`].value' \
+            --output text)
+
+          echo "revision=${TARGET}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Rolling back to revision ${TARGET} (${VERSION})"
+
+      - name: Rollback ECS service
+        run: |
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --task-definition "${PROJECT_NAME}:${{ steps.target.outputs.revision }}" \
+            --force-new-deployment \
+            --output json > /dev/null
+
+      - name: Wait for service stability
+        run: |
+          echo "Waiting for service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}"
+          echo "Rollback to revision ${{ steps.target.outputs.revision }} (${{ steps.target.outputs.version }}) complete!"

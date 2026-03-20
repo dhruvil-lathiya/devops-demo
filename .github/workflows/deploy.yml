@@ -1,0 +1,96 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: 'Application version (e.g., v1.0, v2.0)'
+        required: true
+        default: 'v1.0'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: devops-demo
+  ECS_CLUSTER: devops-demo-cluster
+  ECS_SERVICE: devops-demo-service
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.app_version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=v1.0-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to ECR
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
+        run: |
+          docker build \
+            --build-arg APP_VERSION="${IMAGE_TAG}" \
+            --platform linux/amd64 \
+            -t "${ECR_REGISTRY}/${PROJECT_NAME}:${IMAGE_TAG}" \
+            -t "${ECR_REGISTRY}/${PROJECT_NAME}:latest" \
+            ./app
+          docker push "${ECR_REGISTRY}/${PROJECT_NAME}:${IMAGE_TAG}"
+          docker push "${ECR_REGISTRY}/${PROJECT_NAME}:latest"
+          echo "image=${ECR_REGISTRY}/${PROJECT_NAME}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${PROJECT_NAME}" \
+            --query 'taskDefinition' \
+            --output json | \
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            > task-definition.json
+
+      - name: Update task definition with new image
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.PROJECT_NAME }}
+          image: ${{ steps.build.outputs.image }}
+          environment-variables: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
