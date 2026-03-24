@@ -47,7 +47,7 @@ variable "private_subnet_cidrs" {
 variable "ecs_instance_type" {
   description = "EC2 instance type for ECS worker nodes"
   type        = string
-  default     = "t3.micro"
+  default     = "t2.micro"
 }
 
 variable "ecs_min_instances" {
@@ -97,7 +97,7 @@ variable "db_name" {
 variable "db_instance_class" {
   description = "RDS instance class"
   type        = string
-  default     = "db.t3.micro"
+  default     = "db.t2.micro"
 }
 
 # --- DNS (Cloudflare) ---

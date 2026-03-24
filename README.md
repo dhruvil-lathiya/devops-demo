@@ -163,8 +163,7 @@ All deployment and rollback is managed entirely through GitHub Actions -- no scr
 
 ## Costs
 
-For a demo running 2x `t3.micro` EC2 + 1x `db.t3.micro` RDS + ALB + NAT Gateway:
-- Estimated ~$50-70/month
+Uses free-tier eligible instances (2x `t2.micro` EC2, 1x `db.t2.micro` RDS). Non-free-tier resources (ALB, NAT Gateway) cost ~$5-6 for 3 days.
 - Terminate with `terraform destroy` when not in use
 
 ## Cleanup
