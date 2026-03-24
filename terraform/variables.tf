@@ -97,7 +97,7 @@ variable "db_name" {
 variable "db_instance_class" {
   description = "RDS instance class"
   type        = string
-  default     = "db.t2.micro"
+  default     = "db.t3.micro"
 }
 
 # --- DNS (Cloudflare) ---
